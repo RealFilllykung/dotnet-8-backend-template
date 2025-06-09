@@ -2,5 +2,5 @@
 
 public interface IIpRepository
 {
-    
+    public Task<string> GetCurrentPublicIp();
 }

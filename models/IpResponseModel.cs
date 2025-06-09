@@ -2,5 +2,5 @@
 
 public class IpResponseModel
 {
-    
+    public string ip {get; set;}
 }
