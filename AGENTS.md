@@ -221,7 +221,42 @@ catch (Exception error)
 - Use XML comments for public APIs only
 - Avoid inline comments - write self-explanatory code
 - Use descriptive variable names instead of comments
-- **Tests have ZERO comments** - see [Testing Guide](tests/AGENTS.md)
+
+#### Strict No-Comments Policy in Tests
+Tests must NEVER include comments. Instead, ensure clarity through:
+
+1. **Descriptive Test Names**
+   ```csharp
+   // Instead of comments, use clear method names:
+   public async Task GetUser_WhenUserExists_ReturnsUserData()
+   ```
+
+2. **Visual Structure**
+   ```csharp
+   [Fact]
+   public async Task GetUser_WhenUserExists_ReturnsUserData()
+   {
+       var expectedUser = new UserModel { Id = 1, Name = "Test" };
+       _repositoryMock.Setup(x => x.GetByIdAsync(1))
+           .ReturnsAsync(expectedUser);
+
+       var actualUser = await _service.GetUserAsync(1);
+
+       Assert.Equal(expectedUser.Id, actualUser.Id);
+       Assert.Equal(expectedUser.Name, actualUser.Name);
+   }
+   ```
+
+3. **Intention-Revealing Variables**
+   - Use `expectedUser`, not `user`
+   - Use `actualResponse`, not `result`
+   - Prefix test data with `valid` or `invalid`
+
+4. **Structured Test Flow**
+   - Group mock setups at start
+   - Single line space before action
+   - Single line space before assertions
+   - NO "Arrange/Act/Assert" comments
 
 ## Development Commands
 

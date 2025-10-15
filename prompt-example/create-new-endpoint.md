@@ -260,6 +260,279 @@ builder.Services.AddHttpClient<IWeatherRepository, WeatherRepository>(
 
 ---
 
+## Example 5: TDD Approach with Binary File Response
+
+### Prompt
+```
+Create me a new endpoint of GET "/image" which it will fetch a random
+image and display on browser from https://picsum.photos/200/300.
+
+Use TDD approach for this case. The picture resolution will be 200x300 pixel.
+```
+
+### Expected Result
+
+The AI agent should follow TDD principles by creating tests first, then implementation. Notice there's **no Model file** needed since we're returning binary data directly.
+
+#### 1. Service Tests (`tests/services/ImageServiceTests.cs`)
+```csharp
+using dotnet_8_backend_template.interfaces.repositories;
+using dotnet_8_backend_template.services;
+using Microsoft.Extensions.Logging;
+using Moq;
+using Xunit;
+
+namespace dotnet_8_backend_template.tests.services;
+
+public class ImageServiceTests
+{
+    private readonly Mock<ILogger<ImageService>> _loggerMock;
+    private readonly Mock<IImageRepository> _imageRepositoryMock;
+    private readonly ImageService _service;
+
+    public ImageServiceTests()
+    {
+        _loggerMock = new Mock<ILogger<ImageService>>();
+        _imageRepositoryMock = new Mock<IImageRepository>();
+        _service = new ImageService(_loggerMock.Object, _imageRepositoryMock.Object);
+    }
+
+    [Fact]
+    public async Task GetRandomImageAsync_ReturnsImageBytesAndContentType()
+    {
+        var expectedImageBytes = new byte[] { 1, 2, 3 };
+        var expectedContentType = "image/jpeg";
+
+        _imageRepositoryMock
+            .Setup(x => x.GetRandomImageAsync())
+            .ReturnsAsync((expectedImageBytes, expectedContentType));
+
+        var (actualBytes, actualContentType) = await _service.GetRandomImageAsync();
+
+        Assert.Equal(expectedImageBytes, actualBytes);
+        Assert.Equal(expectedContentType, actualContentType);
+    }
+}
+```
+
+#### 2. Controller Tests (`tests/controllers/ImageControllerTests.cs`)
+```csharp
+using dotnet_8_backend_template.controllers;
+using dotnet_8_backend_template.interfaces.services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Moq;
+using Xunit;
+
+namespace dotnet_8_backend_template.tests.controllers;
+
+public class ImageControllerTests
+{
+    private readonly Mock<ILogger<ImageController>> _loggerMock;
+    private readonly Mock<IImageService> _imageServiceMock;
+    private readonly ImageController _controller;
+
+    public ImageControllerTests()
+    {
+        _loggerMock = new Mock<ILogger<ImageController>>();
+        _imageServiceMock = new Mock<IImageService>();
+        _controller = new ImageController(_loggerMock.Object, _imageServiceMock.Object);
+    }
+
+    [Fact]
+    public async Task GetRandomImage_ReturnsFileContentResult()
+    {
+        var expectedImageBytes = new byte[] { 1, 2, 3 };
+        var expectedContentType = "image/jpeg";
+
+        _imageServiceMock
+            .Setup(x => x.GetRandomImageAsync())
+            .ReturnsAsync((expectedImageBytes, expectedContentType));
+
+        var result = await _controller.GetRandomImage();
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal(expectedImageBytes, fileResult.FileContents);
+        Assert.Equal(expectedContentType, fileResult.ContentType);
+    }
+}
+```
+
+#### 3. Repository Interface (`interfaces/repositories/IImageRepository.cs`)
+```csharp
+namespace dotnet_8_backend_template.interfaces.repositories;
+
+public interface IImageRepository
+{
+    Task<(byte[] imageBytes, string contentType)> GetRandomImageAsync();
+}
+```
+
+#### 4. Repository Implementation (`repositories/ImageRepository.cs`)
+```csharp
+using dotnet_8_backend_template.interfaces.repositories;
+using Microsoft.Extensions.Logging;
+
+namespace dotnet_8_backend_template.repositories;
+
+public class ImageRepository : IImageRepository
+{
+    private readonly HttpClient _httpClient;
+    private readonly ILogger<ImageRepository> _logger;
+
+    public ImageRepository(HttpClient httpClient, ILogger<ImageRepository> logger)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+    }
+
+    public async Task<(byte[] imageBytes, string contentType)> GetRandomImageAsync()
+    {
+        try
+        {
+            _logger.LogInformation("[ImageRepository] Fetching random image from Picsum Photos");
+
+            var response = await _httpClient.GetAsync("200/300");
+            response.EnsureSuccessStatusCode();
+
+            var imageBytes = await response.Content.ReadAsByteArrayAsync();
+            var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
+
+            return (imageBytes, contentType);
+        }
+        catch (Exception error)
+        {
+            _logger.LogError(error, "[ImageRepository] Error fetching random image");
+            throw;
+        }
+    }
+}
+```
+
+#### 5. Service Interface (`interfaces/services/IImageService.cs`)
+```csharp
+namespace dotnet_8_backend_template.interfaces.services;
+
+public interface IImageService
+{
+    Task<(byte[] imageBytes, string contentType)> GetRandomImageAsync();
+}
+```
+
+#### 6. Service Implementation (`services/ImageService.cs`)
+```csharp
+using dotnet_8_backend_template.interfaces.repositories;
+using dotnet_8_backend_template.interfaces.services;
+using Microsoft.Extensions.Logging;
+
+namespace dotnet_8_backend_template.services;
+
+public class ImageService : IImageService
+{
+    private readonly IImageRepository _imageRepository;
+    private readonly ILogger<ImageService> _logger;
+
+    public ImageService(ILogger<ImageService> logger, IImageRepository imageRepository)
+    {
+        _logger = logger;
+        _imageRepository = imageRepository;
+    }
+
+    public async Task<(byte[] imageBytes, string contentType)> GetRandomImageAsync()
+    {
+        try
+        {
+            _logger.LogInformation("[ImageService] Getting random image");
+            return await _imageRepository.GetRandomImageAsync();
+        }
+        catch (Exception error)
+        {
+            _logger.LogError(error, "[ImageService] Error getting random image");
+            throw;
+        }
+    }
+}
+```
+
+#### 7. Controller (`controllers/ImageController.cs`)
+```csharp
+using dotnet_8_backend_template.interfaces.services;
+using Microsoft.AspNetCore.Mvc;
+
+namespace dotnet_8_backend_template.controllers;
+
+[ApiController]
+[Route("image")]
+public class ImageController : ControllerBase
+{
+    private readonly ILogger<ImageController> _logger;
+    private readonly IImageService _imageService;
+
+    public ImageController(ILogger<ImageController> logger, IImageService imageService)
+    {
+        _logger = logger;
+        _imageService = imageService;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetRandomImage()
+    {
+        try
+        {
+            _logger.LogInformation("[ImageController] Getting random image");
+            var (imageBytes, contentType) = await _imageService.GetRandomImageAsync();
+            return File(imageBytes, contentType);
+        }
+        catch (Exception error)
+        {
+            _logger.LogError(error, "[ImageController] Error getting random image");
+            throw;
+        }
+    }
+}
+```
+
+#### 8. Dependency Injection Registration (in `Program.cs`)
+```csharp
+void SetupDependencyInjection()
+{
+    builder.Services.AddTransient<IIpService, IpService>();
+    builder.Services.AddTransient<IImageService, ImageService>();
+
+    builder.Services.AddHttpClient<IIpRepository, IpRepository>(
+        client => client.BaseAddress = new Uri(builder.Configuration["IP_API_URL"]!));
+
+    builder.Services.AddHttpClient<IImageRepository, ImageRepository>(
+        client => client.BaseAddress = new Uri("https://picsum.photos/"));
+}
+```
+
+### Testing the Endpoint
+
+**Request:**
+```http
+GET https://localhost:5001/image
+```
+
+**Response:**
+- Binary image data (200x300 pixel JPEG)
+- Content-Type: image/jpeg
+- Can be displayed directly in browser
+
+**Swagger UI:**
+Navigate to `https://localhost:5001/swagger` and test the `/image` endpoint. The response will show as downloadable binary data.
+
+### Key Differences in This Example
+
+1. **TDD Approach**: Tests were created BEFORE implementation
+2. **Binary Response**: Returns `IActionResult` with `File()` instead of a model
+3. **No Model File**: Binary data doesn't need a response model
+4. **Tuple Return Type**: Uses `(byte[], string)` to return both data and content type
+5. **HttpClient Base Address**: Configured in DI registration for cleaner repository code
+6. **No Comments**: Following the strict no-comments policy (especially in tests)
+
+---
+
 ## Advanced Prompts
 
 ### With Query Parameters
