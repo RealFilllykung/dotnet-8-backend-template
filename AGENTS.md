@@ -13,6 +13,19 @@ This is a **.NET 8 Web API** template following the **Controller-Service-Reposit
 - Docker support
 - Minimal API configuration with Controllers
 
+## Layer-Specific Guides
+
+For detailed, layer-specific instructions, refer to these dedicated guides:
+
+- **[Controllers Guide](controllers/AGENTS.md)** - HTTP layer patterns, routing, request/response handling
+- **[Services Guide](services/AGENTS.md)** - Business logic, data transformation, orchestration
+- **[Repositories Guide](repositories/AGENTS.md)** - Data access, HTTP clients, external APIs
+- **[Interfaces Guide](interfaces/AGENTS.md)** - Interface contracts for services and repositories
+- **[Models Guide](models/AGENTS.md)** - Data transfer objects, request/response models
+- **[Testing Guide](tests/AGENTS.md)** - Unit tests, integration tests, testing patterns
+
+**Start with the layer you're working on for detailed examples and best practices.**
+
 ## Architecture Pattern: Controller → Service → Repository
 
 This project strictly follows a three-layer architecture:
