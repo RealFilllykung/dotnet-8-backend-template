@@ -541,6 +541,404 @@ When generating code for this project:
 
 See the "Creating a New Feature" section above for a complete, step-by-step example of implementing a new API endpoint following all project conventions.
 
+## Unit Testing
+
+### Testing Framework Setup
+
+This project uses **xUnit** for unit testing with **Moq** for mocking dependencies.
+
+**Required NuGet Packages:**
+```xml
+<PackageReference Include="xunit" Version="2.9.2"/>
+<PackageReference Include="xunit.runner.visualstudio" Version="2.8.2"/>
+<PackageReference Include="Moq" Version="4.20.72"/>
+<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1"/>
+<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11"/>
+```
+
+### Testing Directory Structure
+
+```
+tests/
+  controllers/
+    {Entity}ControllerTests.cs
+  services/
+    {Entity}ServiceTests.cs
+  repositories/
+    {Entity}RepositoryTests.cs
+```
+
+### Test Naming Convention
+
+**Test Class Names:** `{ClassName}Tests` (e.g., `IpServiceTests`, `IpControllerTests`)
+
+**Test Method Names:** Use Given-When-Then pattern:
+```
+GivenCondition_WhenAction_ThenExpectedOutcome
+```
+
+Examples:
+- `GivenValidIpResponse_WhenGetCurrentMachinePublicIp_ThenReturnsCorrectIpAddress`
+- `GivenServiceThrowsException_WhenGetCurrentMachinePublicIp_ThenThrowsException`
+- `GivenEmptyResponse_WhenGetCurrentPublicIp_ThenThrowsIndexOutOfRangeException`
+
+### Writing Readable Tests Without Comments
+
+**CRITICAL RULE**: This project does NOT use comments in any code, including tests. Write self-explanatory code by:
+1. Using descriptive variable names
+2. Avoiding abbreviations
+3. Using clear method names
+4. Structuring code logically with blank lines as separators
+
+**AVOID** abbreviations like:
+- `repo` → Use `repository`
+- `svc` → Use `service`
+- `req` → Use `request`
+- `res` → Use `response`
+- `exp` → Use `expected`
+- `act` → Use `actual`
+
+### Service Layer Testing Pattern
+
+Test services by mocking repository dependencies. Services should not make actual HTTP calls or database connections in tests.
+
+**File Location:** `tests/services/{Entity}ServiceTests.cs`
+
+**Example: IpServiceTests.cs**
+
+```csharp
+using dotnet_8_backend_template.interfaces.repositories;
+using dotnet_8_backend_template.models;
+using dotnet_8_backend_template.services;
+using Moq;
+using Xunit;
+
+namespace dotnet_8_backend_template.tests.services;
+
+public class IpServiceTests
+{
+    private readonly Mock<IIpRepository> _mockIpRepository;
+    private readonly Mock<ILogger<IpService>> _mockLogger;
+    private readonly IpService _ipService;
+
+    public IpServiceTests()
+    {
+        _mockIpRepository = new Mock<IIpRepository>();
+        _mockLogger = new Mock<ILogger<IpService>>();
+        _ipService = new IpService(_mockIpRepository.Object, _mockLogger.Object);
+    }
+
+    #region Positive Test Cases
+
+    [Fact]
+    public async Task GivenValidIpResponse_WhenGetCurrentMachinePublicIp_ThenReturnsCorrectIpAddress()
+    {
+        string expectedIp = "1.2.3.4";
+        string mockRepositoryResponse = $"{{\"ip\": {expectedIp}}}";
+
+        _mockIpRepository
+            .Setup(repository => repository.GetCurrentPublicIp())
+            .ReturnsAsync(mockRepositoryResponse);
+
+        IpResponseModel result = await _ipService.GetCurrentMachinePublicIp();
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedIp, result.ip);
+
+        _mockIpRepository.Verify(repository => repository.GetCurrentPublicIp(), Times.Once);
+    }
+
+    #endregion
+
+    #region Negative Test Cases
+
+    [Fact]
+    public async Task GivenRepositoryThrowsException_WhenGetCurrentMachinePublicIp_ThenThrowsException()
+    {
+        var expectedException = new HttpRequestException("Unable to connect to the remote server");
+
+        _mockIpRepository
+            .Setup(repository => repository.GetCurrentPublicIp())
+            .ThrowsAsync(expectedException);
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            async () => await _ipService.GetCurrentMachinePublicIp()
+        );
+
+        Assert.Equal("Unable to connect to the remote server", exception.Message);
+
+        _mockIpRepository.Verify(repository => repository.GetCurrentPublicIp(), Times.Once);
+    }
+
+    #endregion
+}
+```
+
+**Key Service Testing Principles:**
+1. Mock repository interfaces using `Mock<IRepository>`
+2. Mock logger using `Mock<ILogger<ServiceClass>>`
+3. Create service instance with mocked dependencies
+4. Use `.Setup()` to configure mock behavior
+5. Use `.ReturnsAsync()` for async mock returns
+6. Use `.ThrowsAsync()` to simulate exceptions
+7. Use `.Verify()` to ensure methods were called correctly
+8. Use `Times.Once`, `Times.Never`, `Times.Exactly(n)` for verification
+
+### Controller Layer Testing Pattern (Integration Tests)
+
+Test controllers by making actual HTTP requests using `TestServer`. This tests the full HTTP request pipeline without running the actual application.
+
+**File Location:** `tests/controllers/{Entity}ControllerTests.cs`
+
+**Required Packages:**
+```csharp
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using System.Net;
+using System.Net.Http.Json;
+```
+
+**Example: IpControllerTests.cs**
+
+```csharp
+using System.Net;
+using System.Net.Http.Json;
+using dotnet_8_backend_template.interfaces.services;
+using dotnet_8_backend_template.models;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using Xunit;
+
+namespace dotnet_8_backend_template.tests.controllers;
+
+public class IpControllerTests : IDisposable
+{
+    private TestServer? _testServer;
+    private HttpClient? _httpClient;
+
+    public void Dispose()
+    {
+        _httpClient?.Dispose();
+        _testServer?.Dispose();
+    }
+
+    #region Positive Test Cases
+
+    [Fact]
+    public async Task GivenValidRequest_WhenGetCurrentMachinePublicIp_ThenReturnsOkWithIpAddress()
+    {
+        string expectedIp = "203.0.113.42";
+        var mockIpService = new Mock<IIpService>();
+        mockIpService
+            .Setup(service => service.GetCurrentMachinePublicIp())
+            .ReturnsAsync(new IpResponseModel { ip = expectedIp });
+
+        _testServer = new TestServer(new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddControllers();
+                services.AddTransient(_ => mockIpService.Object);
+            })
+            .Configure(app =>
+            {
+                app.UseRouting();
+                app.UseEndpoints(endpoints =>
+                {
+                    endpoints.MapControllers();
+                });
+            }));
+
+        _httpClient = _testServer.CreateClient();
+
+        var response = await _httpClient.GetAsync("/ip");
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var result = await response.Content.ReadFromJsonAsync<IpResponseModel>();
+        Assert.NotNull(result);
+        Assert.Equal(expectedIp, result.ip);
+
+        mockIpService.Verify(service => service.GetCurrentMachinePublicIp(), Times.Once);
+    }
+
+    #endregion
+
+    #region Negative Test Cases
+
+    [Fact]
+    public async Task GivenServiceThrowsException_WhenGetCurrentMachinePublicIp_ThenThrowsException()
+    {
+        var mockIpService = new Mock<IIpService>();
+        mockIpService
+            .Setup(service => service.GetCurrentMachinePublicIp())
+            .ThrowsAsync(new HttpRequestException("Service unavailable"));
+
+        _testServer = new TestServer(new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddControllers();
+                services.AddTransient(_ => mockIpService.Object);
+            })
+            .Configure(app =>
+            {
+                app.UseRouting();
+                app.UseEndpoints(endpoints =>
+                {
+                    endpoints.MapControllers();
+                });
+            }));
+
+        _httpClient = _testServer.CreateClient();
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            async () => await _httpClient.GetAsync("/ip")
+        );
+
+        Assert.Equal("Service unavailable", exception.Message);
+
+        mockIpService.Verify(service => service.GetCurrentMachinePublicIp(), Times.Once);
+    }
+
+    #endregion
+}
+```
+
+**Key Controller Testing Principles:**
+1. Use `TestServer` with `WebHostBuilder` for in-memory HTTP testing
+2. Implement `IDisposable` to properly clean up resources
+3. Mock service layer only (not repositories)
+4. Use `HttpClient.GetAsync()`, `PostAsync()`, etc. to make actual HTTP calls
+5. Use `ReadFromJsonAsync<T>()` to deserialize responses
+6. Test HTTP status codes with `Assert.Equal(HttpStatusCode.OK, response.StatusCode)`
+7. Use `EnsureSuccessStatusCode()` for 2xx status code validation
+8. Configure minimal middleware pipeline (UseRouting, MapControllers)
+
+### Test Organization
+
+**Use Regions to Group Tests:**
+```csharp
+#region Positive Test Cases
+[Fact]
+public async Task GivenValidInput_WhenMethodCalled_ThenReturnsExpectedResult()
+{
+}
+#endregion
+
+#region Negative Test Cases
+[Fact]
+public async Task GivenInvalidInput_WhenMethodCalled_ThenThrowsException()
+{
+}
+#endregion
+
+#region Edge Cases
+[Fact]
+public async Task GivenEdgeCondition_WhenMethodCalled_ThenHandlesCorrectly()
+{
+}
+#endregion
+```
+
+### Common xUnit Assertions
+
+```csharp
+Assert.Equal(expected, actual);
+Assert.NotEqual(unexpected, actual);
+Assert.True(condition);
+Assert.False(condition);
+Assert.Null(object);
+Assert.NotNull(object);
+Assert.Empty(collection);
+Assert.NotEmpty(collection);
+Assert.Contains("substring", actualString);
+Assert.Throws<ExceptionType>(() => methodCall());
+Assert.ThrowsAsync<ExceptionType>(async () => await asyncMethodCall());
+```
+
+### Moq Verification Methods
+
+```csharp
+mockObject.Verify(method => method.MethodName(), Times.Once);
+mockObject.Verify(method => method.MethodName(), Times.Never);
+mockObject.Verify(method => method.MethodName(), Times.Exactly(3));
+mockObject.Verify(method => method.MethodName(), Times.AtLeastOnce);
+mockObject.Verify(method => method.MethodName(), Times.AtMost(5));
+```
+
+### Running Tests
+
+**Run All Tests:**
+```bash
+dotnet test
+```
+
+**Run Specific Test Class:**
+```bash
+dotnet test --filter "FullyQualifiedName~IpServiceTests"
+```
+
+**Run Specific Test Method:**
+```bash
+dotnet test --filter "FullyQualifiedName~GivenValidIpResponse_WhenGetCurrentMachinePublicIp_ThenReturnsCorrectIpAddress"
+```
+
+**Run with Verbose Output:**
+```bash
+dotnet test --logger "console;verbosity=detailed"
+```
+
+### Test Coverage Guidelines
+
+**For Services:**
+- Test all public methods
+- Test positive scenarios (valid inputs, successful operations)
+- Test negative scenarios (exceptions, invalid inputs)
+- Test edge cases (empty strings, null values, boundary conditions)
+- Verify all dependencies are called correctly
+
+**For Controllers:**
+- Test successful HTTP requests (200 OK)
+- Test error scenarios (exception handling)
+- Test different HTTP methods (GET, POST, PUT, DELETE)
+- Verify correct status codes
+- Verify response body deserialization
+
+### Best Practices for Unit Testing
+
+1. **One assertion concept per test** - Test one behavior per test method
+2. **Isolation** - Each test should be independent and not rely on other tests
+3. **Fast execution** - Tests should run quickly (no actual HTTP calls, no database)
+4. **Deterministic** - Tests should produce same results every time
+5. **Descriptive names** - Use Given-When-Then naming pattern
+6. **No comments** - Write self-explanatory code with descriptive names
+7. **Avoid abbreviations** - Use full words for clarity
+8. **Clean up resources** - Implement IDisposable when needed
+9. **Mock external dependencies** - Never make real HTTP calls or database queries
+10. **Verify mock interactions** - Always verify that mocked methods were called
+
+### Example Test Checklist for New Features
+
+When adding a new feature, create tests for:
+
+**Service Layer:**
+- ✅ Valid input returns expected output
+- ✅ Repository throws exception, service propagates it
+- ✅ Empty response from repository
+- ✅ Malformed data from repository
+- ✅ Null reference scenarios
+- ✅ Timeout scenarios
+- ✅ Logger is called appropriately
+
+**Controller Layer:**
+- ✅ Valid HTTP GET request returns 200 OK with correct data
+- ✅ Service throws exception, controller propagates it
+- ✅ HTTP POST request with valid body
+- ✅ HTTP status codes are correct
+- ✅ Response serialization works correctly
+
 ## Questions or Issues?
 
 When encountering ambiguity:

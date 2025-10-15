@@ -29,8 +29,18 @@ public class IpService : IIpService
     {
         string[] colonSplit = ipResponseBody.Split(':');
         string behindSubstring = colonSplit[1].Substring(1);
-        string[] tagSplit = behindSubstring.Split('<');
-        string ip = tagSplit[0];
+        int closingBraceIndex = behindSubstring.IndexOf('}');
+        string ip;
+        if (closingBraceIndex >= 0)
+        {
+            ip = behindSubstring.Substring(0, closingBraceIndex).Trim();
+        }
+        else
+        {
+            string[] tagSplit = behindSubstring.Split('<');
+            ip = tagSplit[0].Trim();
+        }
+
         return ip;
     }
 }
